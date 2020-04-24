@@ -1,5 +1,29 @@
 import { ServerRequest, listenAndServeTLS, listenAndServe } from "../deps.ts";
 
+const mimeTypes:{
+    [ext: string]: string;
+} = {
+    "json": "application/json",
+    "html": "text/html",
+    "css": "text/css",
+    "js": "text/javascript",
+    "apng": "image/apng",
+    "bmp": "image/bmp",
+    "gif": "image/gif",
+    "ico": "image/x-ico",
+    "cur": "image/x-ico",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "jfif": "image/jpeg",
+    "pjpeg": "image/jpeg",
+    "pjp": "image/jpeg",
+    "png": "image/png",
+    "svg": "image/svg+xml",
+    "tiff": "image/tiff",
+    "tif": "image/tiff",
+    "webp": "image/webp",
+}
+
 export class TinyRequest {
     private request: ServerRequest;
 
@@ -27,21 +51,55 @@ export class TinyRequest {
 
 export class TinyResponse {
     private response: ServerRequest;
+    private headers: Headers;
 
     constructor(response: ServerRequest) {
         this.response = response;
+        this.headers = new Headers;
+    }
+
+    empty(status: number) {
+        this.response.respond({ status });
     }
 
     text(data: string): void {
-        this.response.respond({ body:data })
+        this.headers.append("Content-Type", "text/plain");
+        this.response.respond({
+            status: 200,
+            headers: this.headers,
+            body: data
+        });
     }
 
     json(data: any): void {
-        this.response.respond({ body:JSON.stringify(data) })
+        this.headers.append("Content-Type", "application/json");
+        this.response.respond({
+            status: 200,
+            headers: this.headers,
+            body: JSON.stringify(data)
+        });
     }
 
     file(file_path: string): void {
-        // TODO
+        const split_file_name = file_path.split(".");
+        const ext_name = split_file_name[split_file_name.length-1];
+        let contentType = mimeTypes[ext_name];
+        if (contentType == undefined) {
+            contentType = "text/plain"
+        }
+        const file_info = Deno.statSync(file_path);
+        if (!file_info.isFile) {
+            // TODO: Throw a not a file error
+            return;
+        }
+        this.headers.append("Content-Type", contentType);
+        const body = Deno.readFileSync(file_path);
+        
+        this.response.respond({
+            status: 200,
+            headers: this.headers,
+            body
+        });
     }
 }
 
@@ -99,6 +157,7 @@ export class TinyServer {
         // TODO
     }
 
+    // TODO: parameters
     get(route: string, handler: (req: TinyRequest, res: TinyResponse) => void): void {
         this.routes.GET[route] = handler;
     }
