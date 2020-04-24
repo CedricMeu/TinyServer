@@ -27,8 +27,11 @@ const mimeTypes:{
 export class TinyRequest {
     private request: ServerRequest;
 
+    private params: { [key: string]: any };
+
     constructor(request: ServerRequest) {
         this.request = request;
+        this.params = {};
     }
 
     public get url() : string {
@@ -47,6 +50,13 @@ export class TinyRequest {
         return this.request.method;
     }
     
+    public param(key: string): any {
+        return this.params[key];
+    }
+
+    public putParam(key: string, value: any) {
+        this.params[key] = value;
+    }
 }
 
 export class TinyResponse {
@@ -89,8 +99,7 @@ export class TinyResponse {
         }
         const file_info = Deno.statSync(file_path);
         if (!file_info.isFile) {
-            // TODO: Throw a not a file error
-            return;
+            throw new Error("Specified path does not direct to a file");
         }
         this.headers.append("Content-Type", contentType);
         const body = Deno.readFileSync(file_path);
@@ -103,10 +112,31 @@ export class TinyResponse {
     }
 }
 
-interface Routes {
-    [method: string]: {
-        [url: string]: (req: TinyRequest, res: TinyResponse) => void
-    };
+type RouteHandle = (req: TinyRequest, res: TinyResponse) => void;
+
+class RouteEntries {
+    [index: string]: Route
+}; 
+
+class Route {
+    handle?: RouteHandle;
+    entries: RouteEntries;
+
+    public constructor() {
+        this.handle = undefined;
+        this.entries = {}
+    }
+}
+
+class Router {
+    [method: string]: Route;
+
+    public constructor() {
+        this["GET"] = new Route();
+        this["PUT"] = new Route();
+        this["POST"] = new Route();
+        this["DELETE"] = new Route();
+    }
 }
 
 export interface TinyOptions {
@@ -124,12 +154,12 @@ interface TinyOptionsSecure {
 }
 
 export class TinyServer {
-    private routes: Routes;
+    private router: Router;
     private options: TinyOptions;
 
     public constructor(options: TinyOptions) {
-        this.routes = { GET: {}, POST: {}, PUT: {}, DELETE: {} }
         this.options = options;
+        this.router = new Router();
 
         if (this.options.hasOwnProperty("certFile") && this.options.hasOwnProperty("keyFile")) {
             listenAndServeTLS(<TinyOptionsSecure> this.options, (req: ServerRequest) => this.handleRequest(req));
@@ -145,32 +175,90 @@ export class TinyServer {
     protected handleRequest(req: ServerRequest) {
         let request = new TinyRequest(req);
         let response = new TinyResponse(req);
-        if (this.routes[request.method][request.url] == undefined) {
+
+        let entry: Route = this.router[request.method];
+        let handle: RouteHandle | undefined = this.findHandle(request.url, entry);
+        if (handle === undefined) {
             // TODO: 404 page settings
             response.text(`404: Page '${request.url}' not found!`);
-        } else{
-            this.routes[request.method][request.url](request, response);
+        } else {
+            handle(request, response);
         }
     }
 
-    static(path: string): void {
+    private splitRoute(route: string): string[] {
+        if (route.startsWith('/')) {
+            route = route.slice(1);
+        }
+        if (route.endsWith('/')) {
+            route = route.slice(0, route.length-1);
+        }
+        return route.split("/");
+    }
+
+    private findHandle(route: string, entry: Route): RouteHandle | undefined {
+        const split_route = this.splitRoute(route);
+        for (let i = 0; i < split_route.length; i++) {
+            let index = split_route[i];
+            entry = entry.entries[index];
+
+            if (entry === undefined) {
+                break;
+            } else if (i == split_route.length-1) {
+                return entry.handle;
+            }
+        }
+        
+        return undefined;
+    }
+
+    private addHandle(route: string, entry: Route, handle: RouteHandle): void {
+        console.log(`adding ${route}`);
+        
+        const split_route = this.splitRoute(route);
+        
+        for (let i = 0; i < split_route.length; i++) {
+            let index = split_route[i];          
+            
+            if (entry.entries[index] === undefined) {
+                entry.entries[index] = new Route();
+            }
+            entry = entry.entries[index]
+
+            if (i == split_route.length - 1) {
+                if (entry.handle !== undefined) {
+                    throw new Error(`A handle for the route '${route}' already exists.`);
+                }
+                entry.handle = handle;
+                return;
+            }
+
+        }
+    }
+
+    public static(path: string): void {
         // TODO
     }
 
     // TODO: parameters
-    get(route: string, handler: (req: TinyRequest, res: TinyResponse) => void): void {
-        this.routes.GET[route] = handler;
+    public get(route: string, handle: (req: TinyRequest, res: TinyResponse) => void): TinyServer {
+        this.addHandle(route, this.router.GET, handle);
+        console.log(JSON.stringify(this.router));
+        return this;
     }
 
-    post(route: string, handler: (req: TinyRequest, res: TinyResponse) => void): void {
-        this.routes.POST[route] = handler;
+    public post(route: string, handle: (req: TinyRequest, res: TinyResponse) => void): TinyServer {
+        this.addHandle(route, this.router.POST, handle);
+        return this;
     }
 
-    put(route: string, handler: (req: TinyRequest, res: TinyResponse) => void): void {
-        this.routes.PUT[route] = handler;
+    public put(route: string, handle: (req: TinyRequest, res: TinyResponse) => void): TinyServer {
+        this.addHandle(route, this.router.PUT, handle);
+        return this;
     }
 
-    delete(route: string, handler: (req: TinyRequest, res: TinyResponse) => void): void {
-        this.routes.DELETE[route] = handler;
+    public delete(route: string, handle: (req: TinyRequest, res: TinyResponse) => void): TinyServer {
+        this.addHandle(route, this.router.DELETE, handle);
+        return this;
     }
 }
