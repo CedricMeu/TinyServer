@@ -24,10 +24,12 @@ const mimeTypes:{
     "webp": "image/webp",
 }
 
+type Parameters = { [key: string]: string | number };
+
 export class TinyRequest {
     private request: ServerRequest;
 
-    private params: { [key: string]: any };
+    public params: Parameters;
 
     constructor(request: ServerRequest) {
         this.request = request;
@@ -52,10 +54,6 @@ export class TinyRequest {
     
     public param(key: string): any {
         return this.params[key];
-    }
-
-    public putParam(key: string, value: any) {
-        this.params[key] = value;
     }
 }
 
@@ -112,7 +110,7 @@ export class TinyResponse {
     }
 }
 
-type RouteHandle = (req: TinyRequest, res: TinyResponse) => void;
+type RouteHandle =(req: TinyRequest, res: TinyResponse) => void;
 
 class RouteEntries {
     [index: string]: Route
@@ -139,6 +137,11 @@ class Router {
     }
 }
 
+enum Protocol {
+    HTTP = "http",
+    HTTPS = "https"
+}
+
 export interface TinyOptions {
     hostname?: string;
     port: number;
@@ -156,16 +159,27 @@ interface TinyOptionsSecure {
 export class TinyServer {
     private router: Router;
     private options: TinyOptions;
+    private _protocol: Protocol;
 
     public constructor(options: TinyOptions) {
         this.options = options;
         this.router = new Router();
 
         if (this.options.hasOwnProperty("certFile") && this.options.hasOwnProperty("keyFile")) {
-            listenAndServeTLS(<TinyOptionsSecure> this.options, (req: ServerRequest) => this.handleRequest(req));
+            listenAndServeTLS(<TinyOptionsSecure>this.options, (req: ServerRequest) => this.handleRequest(req));
+            this._protocol = Protocol.HTTPS;
         } else {
             listenAndServe(this.options, (req: ServerRequest) => this.handleRequest(req));
+            this._protocol = Protocol.HTTP;
         }
+    }
+
+    public get protocol(): string {
+        return this._protocol;
+    }
+
+    public get hostname(): string {
+        return this.options.hostname!;
     }
 
     public get port(): number {
@@ -177,12 +191,15 @@ export class TinyServer {
         let response = new TinyResponse(req);
 
         let entry: Route = this.router[request.method];
-        let handle: RouteHandle | undefined = this.findHandle(request.url, entry);
+        let handle: {
+            handle: RouteHandle, params: Parameters
+        } | undefined = this.findHandle(request.url, entry);
         if (handle === undefined) {
             // TODO: 404 page settings
             response.text(`404: Page '${request.url}' not found!`);
         } else {
-            handle(request, response);
+            request.params = handle.params;
+            handle.handle(request, response);
         }
     }
 
@@ -196,16 +213,37 @@ export class TinyServer {
         return route.split("/");
     }
 
-    private findHandle(route: string, entry: Route): RouteHandle | undefined {
+    private findHandle(route: string, entry: Route): {
+        handle: RouteHandle, params: Parameters
+    } | undefined {
+        const params: Parameters = {};
+        
         const split_route = this.splitRoute(route);
         for (let i = 0; i < split_route.length; i++) {
             let index = split_route[i];
+
+            if (entry.entries[index] === undefined) {
+                let indexes = Object.keys(entry.entries);
+                let param_indexes =
+                    indexes.filter((value) => new RegExp("\{[a-zA-Z][a-zA-Z0-9_]+\}").test(value));
+                
+                if (param_indexes.length == 0) return undefined;
+                let param_index = param_indexes[0];
+
+                let param_key = param_index.slice(1, param_index.length - 1);
+
+                params[param_key] = index;
+
+
+                if (i == split_route.length-1) {
+                    return { handle: <RouteHandle>entry.entries[param_index].handle, params};
+                }
+            }
+
             entry = entry.entries[index];
 
-            if (entry === undefined) {
-                break;
-            } else if (i == split_route.length-1) {
-                return entry.handle;
+            if (i == split_route.length-1) {
+                return { handle: <RouteHandle>entry.handle, params};
             }
         }
         
@@ -213,16 +251,26 @@ export class TinyServer {
     }
 
     private addHandle(route: string, entry: Route, handle: RouteHandle): void {
-        console.log(`adding ${route}`);
-        
         const split_route = this.splitRoute(route);
         
         for (let i = 0; i < split_route.length; i++) {
             let index = split_route[i];          
             
             if (entry.entries[index] === undefined) {
-                entry.entries[index] = new Route();
+                if (index.match(new RegExp("\{[a-zA-Z][a-zA-Z0-9_]\}"))) {
+                    let indexes = Object.keys(entry.entries);
+                    let param_indexes =
+                        indexes.filter((value) => value.match(new RegExp("\{[a-zA-Z][a-zA-Z0-9_]\}")));
+                    if (param_indexes.length == 0) {
+                        entry.entries[index] = new Route();
+                    } else {
+                        throw new Error("Cannot have 2 different types of parameters in same route");
+                    }
+                } else {
+                    entry.entries[index] = new Route();
+                }
             }
+
             entry = entry.entries[index]
 
             if (i == split_route.length - 1) {
@@ -243,7 +291,6 @@ export class TinyServer {
     // TODO: parameters
     public get(route: string, handle: (req: TinyRequest, res: TinyResponse) => void): TinyServer {
         this.addHandle(route, this.router.GET, handle);
-        console.log(JSON.stringify(this.router));
         return this;
     }
 
