@@ -1,4 +1,6 @@
-# DenoServer
+# TinyServer
+> A simple incomplete server library for [Deno](https://deno.land)
+
 ## Usage
 ```ts
 import { TinyServer } from "https://raw.githubusercontent.com/CedricMeu/TinyServer/master/mod.ts"
