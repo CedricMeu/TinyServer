@@ -197,6 +197,9 @@ export class TinyServer {
         if (handle === undefined) {
             // TODO: 404 page settings
             response.text(`404: Page '${request.url}' not found!`);
+        } else if(handle.handle === undefined) {
+            // TODO: 404 page settings
+            response.text(`404: Page '${request.url}' not found!`);
         } else {
             request.params = handle.params;
             handle.handle(request, response);
